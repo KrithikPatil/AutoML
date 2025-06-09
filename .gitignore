@@ -1,0 +1,4 @@
+AutoML_Venv/
+.env
+__pycache__/
+.kaggle/
