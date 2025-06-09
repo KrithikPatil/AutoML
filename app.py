@@ -1,58 +1,36 @@
 import gradio as gr
-from dotenv import load_dotenv
-import os
 from agents.dataset_agent import DatasetAgent
 
-# Load environment variables from .env file
-load_dotenv()
-
-# Ensure Kaggle environment variables are set
-os.environ["KAGGLE_USERNAME"] = os.getenv("KAGGLE_USERNAME")
-os.environ["KAGGLE_KEY"] = os.getenv("KAGGLE_KEY")
-
-# Store user prompt globally (for use by multiple agents)
+# Global variables to store state
 user_prompt = None
+dataset_requirements = None
+dataset_X = None
+dataset_y = None
+reason = None
 
-def find_dataset(task_description):
-    global user_prompt
-    if not task_description:
-        return "Error: Please provide a task description"
-    
-    # Store the user prompt
-    user_prompt = task_description
-    
-    # Initialize and run Dataset Agent
-    try:
-        agent = DatasetAgent(task_description=user_prompt)
-        X, y, reason = agent.run()
-        
-        # Prepare response
-        response = (
-            f"**Task Description**: {user_prompt}\n\n"
-            f"**Dataset Shape**: Features: {X.shape}, Target: {y.shape}\n\n"
-            f"**Reason for Selection**: {reason}"
-        )
-        return response
-    except Exception as e:
-        return f"Error: Dataset Agent failed: {str(e)}"
+def find_dataset(prompt, num_samples, features):
+    global user_prompt, dataset_requirements, dataset_X, dataset_y, reason
+    user_prompt = prompt
+    # Format dataset requirements
+    dataset_requirements = f"num_samples={num_samples}"
+    if features.strip():
+        dataset_requirements += f", features={features}"
+    agent = DatasetAgent(user_prompt, dataset_requirements)
+    dataset_X, dataset_y, reason = agent.run()
+    return f"Dataset shape: {dataset_X.shape}\nReason: {reason}"
 
-# Create Gradio interface
 with gr.Blocks() as demo:
-    gr.Markdown("# AutoML Dataset Selection")
-    task_input = gr.Textbox(
-        label="Enter ML Task Description",
-        placeholder="e.g., classification model for predicting customer churn",
-        lines=4
-    )
-    submit_button = gr.Button("Find Dataset")
-    output = gr.Markdown(label="Result")
-    
-    submit_button.click(
+    gr.Markdown("# AutoML Dataset Generator")
+    with gr.Row():
+        prompt_input = gr.Textbox(label="Task Description", placeholder="e.g., classification model for customer churn")
+        num_samples_input = gr.Number(label="Number of Samples", value=1000, precision=0)
+        features_input = gr.Textbox(label="Desired Features (optional)", placeholder="e.g., age, tenure, contract_type")
+    find_button = gr.Button("Generate Dataset")
+    output = gr.Textbox(label="Output")
+    find_button.click(
         fn=find_dataset,
-        inputs=task_input,
+        inputs=[prompt_input, num_samples_input, features_input],
         outputs=output
     )
 
-if __name__ == "__main__":
-    # Launch Gradio app
-    demo.launch(server_name="0.0.0.0", server_port=7860)
+demo.launch()
