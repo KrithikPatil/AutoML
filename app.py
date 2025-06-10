@@ -15,7 +15,7 @@ def find_dataset(prompt, num_samples, features):
     dataset_requirements = f"num_samples={num_samples}"
     if features.strip():
         dataset_requirements += f", features={features}"
-    agent = DatasetAgent(user_prompt, dataset_requirements)
+    agent = DatasetAgent(user_prompt, dataset_requirements, num_samples)
     dataset_X, dataset_y, reason = agent.run()
     return f"Dataset shape: {dataset_X.shape}\nReason: {reason}"
 
