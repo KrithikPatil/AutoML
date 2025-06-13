@@ -51,6 +51,36 @@ class PreprocessingAgent:
         self.reason = []
         self.eda_results = []
         self.inferred_task = self._infer_ml_task() # New: Infer ML task
+        self._coerce_types() # NEW: Coerce types aggressively at initialization
+        self.identify_columns() # Call identify_columns after type coercion
+
+    def _coerce_types(self):
+        """Attempt to coerce columns to numeric types where possible."""
+        initial_dtypes = self.dataset.dtypes.to_dict()
+        for col in self.dataset.columns:
+            # Skip the target column if it's already identified and not meant to be numeric
+            # (e.g., if it's a categorical target for classification)
+            if self.target_column and col == self.target_column and self.inferred_task == "classification":
+                continue 
+            
+            # Attempt to convert to numeric, coercing errors will turn invalid parsing into NaN
+            converted_series = pd.to_numeric(self.dataset[col], errors='coerce')
+            
+            # Check if conversion actually changed the dtype to numeric and didn't introduce too many NaNs
+            # If the original was not numeric and the new is numeric, and it's mostly numeric
+            if pd.api.types.is_object_dtype(initial_dtypes.get(col)) and pd.api.types.is_numeric_dtype(converted_series.dtype) and converted_series.notna().sum() / len(converted_series) > 0.8: # Require >80% non-NaN after conversion
+                self.dataset[col] = converted_series
+                self.reason.append(f"Coerced column '{col}' to numeric type.")
+            # Special handling for boolean-like columns that might become objects if mixed with other types
+            elif self.dataset[col].nunique(dropna=False) <= 2 and not pd.api.types.is_numeric_dtype(self.dataset[col]):
+                try:
+                    # Attempt to convert to boolean, then to int if needed for numerical treatment
+                    self.dataset[col] = self.dataset[col].astype(bool).astype(int)
+                    self.reason.append(f"Coerced binary column '{col}' to numeric (int) type.")
+                except:
+                    pass # Keep as object if coercion fails or is not appropriate
+        self.reason.append("Completed type coercion for dataset columns.")
+
 
     def _infer_ml_task(self):
         """Infer ML task (classification, regression, clustering) from task_description."""
@@ -89,7 +119,7 @@ class PreprocessingAgent:
         
         # Data types
         dtypes = self.dataset.dtypes.to_dict()
-        dtypes_str = "\n".join([f"{col}: {dtype}" for col, dtype in dtypes.items()])
+        dtypes_str = "\\n".join([f"{col}: {dtype}" for col, dtype in dtypes.items()])
         metadata['dtypes'] = dtypes_str
         
         # Summary statistics
@@ -105,12 +135,12 @@ class PreprocessingAgent:
                 top_vals_str = ", ".join([f"{val}: {count}" for val, count in top_vals.items()])
                 stats_str = f"Column '{col}': {unique_vals} unique values, top values: {top_vals_str}"
                 summary_stats.append(stats_str)
-        metadata['summary_stats'] = "\n".join(summary_stats) if summary_stats else "No summary statistics available."
+        metadata['summary_stats'] = "\\n".join(summary_stats) if summary_stats else "No summary statistics available."
         
         # Missing values
         missing_counts = self.dataset.isnull().sum()
         missing_summary = missing_counts[missing_counts > 0].to_dict()
-        missing_str = "\n".join([f"{col}: {count} missing" for col, count in missing_summary.items()]) if missing_summary else "No missing values."
+        missing_str = "\\n".join([f"{col}: {count} missing" for col, count in missing_summary.items()]) if missing_summary else "No missing values."
         metadata['missing_values'] = missing_str
         
         return metadata
@@ -121,16 +151,16 @@ class PreprocessingAgent:
         
         # Summary statistics
         summary_stats = self.dataset.describe(include='all').to_string()
-        self.eda_results.append("\nSummary Statistics:\n" + summary_stats)
+        self.eda_results.append("\\nSummary Statistics:\\n" + summary_stats)
         
         # Data types
         dtypes = self.dataset.dtypes.to_string()
-        self.eda_results.append("\nData Types:\n" + dtypes)
+        self.eda_results.append("\\nData Types:\\n" + dtypes)
         
         # Missing values
         missing_counts = self.dataset.isnull().sum()
         missing_summary = missing_counts[missing_counts > 0].to_string() if missing_counts.sum() > 0 else "No missing values."
-        self.eda_results.append("\nMissing Values:\n" + missing_summary)
+        self.eda_results.append("\\nMissing Values:\\n" + missing_summary)
         
         # Outliers detection using z-score for numerical columns
         outliers_summary = []
@@ -142,9 +172,9 @@ class PreprocessingAgent:
                 if outlier_count > 0:
                     outliers_summary.append(f"Column '{col}' has {outlier_count} outliers (z-score > 3).")
         if outliers_summary:
-            self.eda_results.append("\nOutliers:\n" + "\n".join(outliers_summary))
+            self.eda_results.append("\\nOutliers:\\n" + "\\n".join(outliers_summary))
         else:
-            self.eda_results.append("\nOutliers: None detected.")
+            self.eda_results.append("\\nOutliers: None detected.")
         
         # Visualizations
         eda_dir = os.path.join("dataset", "eda")
@@ -189,7 +219,7 @@ class PreprocessingAgent:
             
             # If target is numerical (likely regression)
             if pd.api.types.is_numeric_dtype(target_dtype):
-                self.eda_results.append(f"\nTarget Column '{self.target_column}' (Regression Task):")
+                self.eda_results.append(f"\\nTarget Column '{self.target_column}' (Regression Task):")
                 
                 # Distribution of target variable
                 plt.figure(figsize=(8, 6))
@@ -213,7 +243,7 @@ class PreprocessingAgent:
 
             # If target is categorical (likely classification)
             elif pd.api.types.is_string_dtype(target_dtype) or pd.api.types.is_categorical_dtype(target_dtype):
-                self.eda_results.append(f"\nTarget Column '{self.target_column}' (Classification Task):")
+                self.eda_results.append(f"\\nTarget Column '{self.target_column}' (Classification Task):")
                 
                 # Bar plot of target variable distribution
                 plt.figure(figsize=(8, 6))
@@ -256,7 +286,7 @@ class PreprocessingAgent:
         # Save EDA results to file
         eda_text_path = os.path.join("dataset", "eda_results.txt")
         with open(eda_text_path, 'w') as f:
-            f.write("\n".join(self.eda_results))
+            f.write("\\n".join(self.eda_results))
         self.reason.append(f"Saved EDA results to {eda_text_path}.")
         self.reason.append(f"EDA plots saved in '{eda_dir}' directory.")
 
@@ -277,7 +307,7 @@ class PreprocessingAgent:
                 prompt=prompt,
                 options={"num_predict": 200}
             )
-            techniques = [line.strip("- ").strip() for line in response["response"].strip().split("\n") if line.startswith("- ")]
+            techniques = [line.strip("- ").strip() for line in response["response"].strip().split("\\n") if line.startswith("- ")]
             self.reason.append(f"LLM recommended preprocessing techniques: {', '.join(techniques)}")
             return techniques
         except Exception as e:
@@ -399,7 +429,8 @@ class PreprocessingAgent:
         self.reason = [] # Reset reasons for each run
         self.eda_results = [] # Reset EDA results for each run
 
-        self.identify_columns() # Initial column identification
+        # identify_columns is now called in __init__ after _coerce_types
+        # self.identify_columns() 
         self.perform_eda() # Perform EDA first
 
         # Query LLM for preprocessing techniques with metadata
