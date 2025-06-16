@@ -119,7 +119,7 @@ class PreprocessingAgent:
         
         # Data types
         dtypes = self.dataset.dtypes.to_dict()
-        dtypes_str = "\\n".join([f"{col}: {dtype}" for col, dtype in dtypes.items()])
+        dtypes_str = "\n".join([f"{col}: {dtype}" for col, dtype in dtypes.items()])
         metadata['dtypes'] = dtypes_str
         
         # Summary statistics
@@ -135,12 +135,12 @@ class PreprocessingAgent:
                 top_vals_str = ", ".join([f"{val}: {count}" for val, count in top_vals.items()])
                 stats_str = f"Column '{col}': {unique_vals} unique values, top values: {top_vals_str}"
                 summary_stats.append(stats_str)
-        metadata['summary_stats'] = "\\n".join(summary_stats) if summary_stats else "No summary statistics available."
+        metadata['summary_stats'] = "\n".join(summary_stats) if summary_stats else "No summary statistics available."
         
         # Missing values
         missing_counts = self.dataset.isnull().sum()
         missing_summary = missing_counts[missing_counts > 0].to_dict()
-        missing_str = "\\n".join([f"{col}: {count} missing" for col, count in missing_summary.items()]) if missing_summary else "No missing values."
+        missing_str = "\n".join([f"{col}: {count}" for col, count in missing_summary.items()]) if missing_summary else "No missing values."
         metadata['missing_values'] = missing_str
         
         return metadata
@@ -151,16 +151,16 @@ class PreprocessingAgent:
         
         # Summary statistics
         summary_stats = self.dataset.describe(include='all').to_string()
-        self.eda_results.append("\\nSummary Statistics:\\n" + summary_stats)
+        self.eda_results.append("\nSummary Statistics:\n" + summary_stats)
         
         # Data types
         dtypes = self.dataset.dtypes.to_string()
-        self.eda_results.append("\\nData Types:\\n" + dtypes)
+        self.eda_results.append("\nData Types:\n" + dtypes)
         
         # Missing values
         missing_counts = self.dataset.isnull().sum()
         missing_summary = missing_counts[missing_counts > 0].to_string() if missing_counts.sum() > 0 else "No missing values."
-        self.eda_results.append("\\nMissing Values:\\n" + missing_summary)
+        self.eda_results.append("\nMissing Values:\n" + missing_summary)
         
         # Outliers detection using z-score for numerical columns
         outliers_summary = []
@@ -172,9 +172,9 @@ class PreprocessingAgent:
                 if outlier_count > 0:
                     outliers_summary.append(f"Column '{col}' has {outlier_count} outliers (z-score > 3).")
         if outliers_summary:
-            self.eda_results.append("\\nOutliers:\\n" + "\\n".join(outliers_summary))
+            self.eda_results.append("\nOutliers:\n" + "\n".join(outliers_summary))
         else:
-            self.eda_results.append("\\nOutliers: None detected.")
+            self.eda_results.append("\nOutliers: None detected.")
         
         # Visualizations
         eda_dir = os.path.join("dataset", "eda")
@@ -219,7 +219,7 @@ class PreprocessingAgent:
             
             # If target is numerical (likely regression)
             if pd.api.types.is_numeric_dtype(target_dtype):
-                self.eda_results.append(f"\\nTarget Column '{self.target_column}' (Regression Task):")
+                self.eda_results.append(f"\nTarget Column '{self.target_column}' (Regression Task):")
                 
                 # Distribution of target variable
                 plt.figure(figsize=(8, 6))
@@ -243,7 +243,7 @@ class PreprocessingAgent:
 
             # If target is categorical (likely classification)
             elif pd.api.types.is_string_dtype(target_dtype) or pd.api.types.is_categorical_dtype(target_dtype):
-                self.eda_results.append(f"\\nTarget Column '{self.target_column}' (Classification Task):")
+                self.eda_results.append(f"\nTarget Column '{self.target_column}' (Classification Task):")
                 
                 # Bar plot of target variable distribution
                 plt.figure(figsize=(8, 6))
@@ -285,8 +285,8 @@ class PreprocessingAgent:
 
         # Save EDA results to file
         eda_text_path = os.path.join("dataset", "eda_results.txt")
-        with open(eda_text_path, 'w') as f:
-            f.write("\\n".join(self.eda_results))
+        with open(eda_text_path, 'w', encoding='utf-8') as f: # Added encoding
+            f.write("\n".join(self.eda_results))
         self.reason.append(f"Saved EDA results to {eda_text_path}.")
         self.reason.append(f"EDA plots saved in '{eda_dir}' directory.")
 
@@ -455,4 +455,4 @@ class PreprocessingAgent:
         self.dataset.to_csv(preprocessed_path, index=False)
         self.reason.append(f"Saved preprocessed dataset to {preprocessed_path}.")
         
-        return self.dataset, " | ".join(self.reason + self.eda_results)
+        return self.dataset, self.reason # Return the list of reasons directly

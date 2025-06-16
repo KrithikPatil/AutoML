@@ -3,7 +3,8 @@ import pandas as pd
 import sqlite3
 from agents.dataset_agent import DatasetAgent
 from agents.preprocessing_agent import PreprocessingAgent
-import os
+import os # Already imported
+import glob # For finding image files
 
 # Global variables (will now primarily use gr.State for passing between functions)
 # These global vars are mostly for initial default values or if you need persistent access outside Gradio's state
@@ -13,6 +14,11 @@ global_reason = None
 global_preprocessed_dataset = None
 global_preprocess_reason = None
 global_metadata = None
+
+# Define constants for EDA artifact paths
+EDA_BASE_DIR = "dataset"
+EDA_PLOTS_DIR = os.path.join(EDA_BASE_DIR, "eda")
+EDA_TEXT_REPORT_PATH = os.path.join(EDA_BASE_DIR, "eda_results.txt")
 
 def load_csv_file(file):
     try:
@@ -83,7 +89,7 @@ def process_preprocessing_and_eda(current_dataset_state, current_metadata_state,
     Performs preprocessing and EDA on the acquired dataset.
     """
     if current_dataset_state is None:
-        return "Please acquire a dataset first!", None, gr.update(selected=0)
+        return None, None, "Error: Please acquire a dataset first in Tab 1.", "No EDA report available.", None, gr.update(selected=0)
 
     # Use the actual target column for the PreprocessingAgent
     preprocess_agent = PreprocessingAgent(current_dataset_state, 
@@ -91,19 +97,35 @@ def process_preprocessing_and_eda(current_dataset_state, current_metadata_state,
                                           target_column=target_column if target_column.strip() else None)
     
     ordinal_cols = [col.strip() for col in ordinal_columns.split(",") if col.strip()] if ordinal_columns else None
-    
-    # Run preprocessing and EDA
-    preprocessed_df, preprocess_reason_full = preprocess_agent.run(ordinal_columns=ordinal_cols)
-    
-    output_message = [
-        f"**Preprocessing & EDA Complete!**",
-        f"Preprocessed Dataset Shape: {preprocessed_df.shape}",
-        f"Preprocessing and EDA Details:",
-        f"{preprocess_reason_full}"
-    ]
-    
-    # Return preprocessed dataset, metadata, and the full reason for output
-    return preprocessed_df, current_metadata_state, "\n".join(output_message)
+    try:
+        # Run preprocessing and EDA. The agent saves EDA artifacts to files.
+        # The second return value is now a list of preprocessing reasons.
+        preprocessed_df, preprocess_reason_list = preprocess_agent.run(ordinal_columns=ordinal_cols)
+    except Exception as e:
+        error_msg = f"Error during preprocessing/EDA: {str(e)}"
+        return current_dataset_state, current_metadata_state, error_msg, error_msg, None # Keep current dataset, show error
+
+    # 1. Construct the preprocessing log text
+    preprocessing_log_text = "**Preprocessing Log:**\n" + "\n".join(preprocess_reason_list)
+
+    # 2. Read the textual EDA summary from the file
+    eda_summary_text = f"EDA textual report ({EDA_TEXT_REPORT_PATH}) not found or could not be read."
+    if os.path.exists(EDA_TEXT_REPORT_PATH):
+        try:
+            with open(EDA_TEXT_REPORT_PATH, 'r', encoding='utf-8') as f:
+                eda_summary_text = f.read()
+                if not eda_summary_text.strip():
+                    eda_summary_text = "EDA report file is empty."
+        except Exception as e:
+            eda_summary_text = f"Error reading EDA report file '{EDA_TEXT_REPORT_PATH}': {str(e)}"
+            
+    # 3. Collect paths to all generated EDA plots
+    eda_image_paths = []
+    if os.path.exists(EDA_PLOTS_DIR):
+        eda_image_paths = sorted(glob.glob(os.path.join(EDA_PLOTS_DIR, "*.png"))) # Sort for consistent order
+
+    # Return preprocessed dataset, metadata, preprocessing log, EDA text, and EDA plot paths
+    return preprocessed_df, current_metadata_state, preprocessing_log_text, eda_summary_text, eda_image_paths
 
 
 with gr.Blocks() as demo:
@@ -193,7 +215,18 @@ with gr.Blocks() as demo:
             ordinal_columns_input = gr.Textbox(label="Ordinal Columns (comma-separated, optional)", placeholder="e.g., education_level, satisfaction_score")
             
             preprocess_button = gr.Button("Perform Preprocessing and EDA")
-            preprocessing_output = gr.Textbox(label="Preprocessing & EDA Status", lines=20)
+            
+            gr.Markdown("### Preprocessing Log")
+            preprocessing_log_output = gr.Textbox(label="Steps taken by the Preprocessing Agent", lines=10, interactive=False, show_copy_button=True)
+
+            gr.Markdown("### EDA Textual Summary")
+            eda_text_output = gr.Textbox(label="Exploratory Data Analysis Report", lines=15, interactive=False, show_copy_button=True)
+
+            gr.Markdown("### EDA Visualizations")
+            eda_plots_output = gr.Gallery(
+                label="Generated EDA Plots", show_label=False, elem_id="eda_gallery",
+                columns=[2], height="auto", object_fit="contain"
+            )
 
             # Update dataset info when dataset_state changes
             dataset_state.change(
@@ -212,8 +245,16 @@ with gr.Blocks() as demo:
                     target_column_input,
                     ordinal_columns_input
                 ],
-                outputs=[dataset_state, metadata_state, preprocessing_output] # Update state and output
+                outputs=[
+                    dataset_state, 
+                    metadata_state, 
+                    preprocessing_log_output, 
+                    eda_text_output, 
+                    eda_plots_output
+                ] # Update state and all relevant outputs
             )
 
     # Note: `demo.launch()` is already at the end of your original script.
+if __name__ == "__main__":
+    os.makedirs(EDA_PLOTS_DIR, exist_ok=True) # Ensure EDA plots directory exists
 demo.launch()
