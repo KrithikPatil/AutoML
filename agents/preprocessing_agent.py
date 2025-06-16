@@ -269,10 +269,24 @@ class PreprocessingAgent:
                 # Stacked bar plots for categorical features by target classes
                 for col in self.categorical_columns:
                     if col != self.target_column and not self.dataset[[col, self.target_column]].dropna().empty:
-                        plt.figure(figsize=(10, 7))
-                        # Use pd.crosstab for counts and then plot
-                        cross_tab = pd.crosstab(self.dataset[col], self.dataset[self.target_column])
-                        cross_tab.plot(kind='bar', stacked=True, figsize=(10, 7))
+                        # Ensure the categorical column does not have too many unique values for plotting
+                        if self.dataset[col].nunique() > 50: # Heuristic: skip if more than 50 unique values
+                            self.eda_results.append(f"Skipped stacked bar plot for '{col}' by target: too many unique values ({self.dataset[col].nunique()}).")
+                            continue
+                        
+                        # Create a figure and an axes
+                        fig, ax = plt.subplots(figsize=(12, 7)) # Increased figure size for better readability
+                        try:
+                            # Use pd.crosstab for counts and then plot on the created axes
+                            cross_tab = pd.crosstab(self.dataset[col].astype(str), self.dataset[self.target_column].astype(str)) # astype(str) for safety
+                            cross_tab.plot(kind='bar', stacked=True, ax=ax) # Use ax=ax
+                        except Exception as e:
+                            self.eda_results.append(f"Could not generate stacked bar plot for '{col}' by target: {e}")
+                            plt.close(fig) # Close the figure if plotting failed
+                            continue
+                        
+                        # Set plot properties
+                        ax.set_title(f"Distribution of {col} across {self.target_column} Classes")
                         plt.title(f"Distribution of {col} across {self.target_column} Classes")
                         plt.xlabel(col)
                         plt.ylabel("Count")
