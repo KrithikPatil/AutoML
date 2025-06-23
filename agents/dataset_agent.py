@@ -18,6 +18,7 @@ You are a synthetic dataset generator.
 Based on the task description and dataset requirements below, generate a synthetic dataset in raw CSV format with 10 sample rows and a header. You are allowed to assume and include **additional relevant features** that make sense for the given machine learning task. The dataset should be logically consistent and include realistic values.
 
 ❗ Important Instructions:
+- For supervised learning tasks (like classification or regression), name the target/label column 'target'.
 - Output only raw CSV (no markdown, no explanations, no headers like "CSV:", no quotes around the entire CSV block).
 - Include a header row with clear, unique column names (e.g., use underscores instead of spaces, avoid special characters or reserved words like 'float').
 - Ensure data types are appropriate (e.g., integers for IDs or counts, floats for scores, strings for text or categories).
@@ -172,17 +173,6 @@ class DatasetAgent:
 
     def run(self):
         initial_df, reason = self.generate_csv_from_llm()
-
-        # Ensure there's a target column for supervised learning if that's implied
-        # For now, assume the last column is the target if not specified otherwise
-        if not initial_df.empty and "target" not in initial_df.columns and len(initial_df.columns) > 0:
-            # Rename last column to 'target' as a convention if no target is explicitly defined by LLM
-            # This is a heuristic and might need adjustment based on LLM output patterns
-            if len(initial_df.columns) > 1: # Only if there's more than one column
-                initial_df = initial_df.rename(columns={initial_df.columns[-1]: "target"})
-                reason += " Renamed last column to 'target'."
-            else: # Single column dataset, treat it as a feature X. y will be empty.
-                pass
 
         enlarged_df, enlargement_reason = self.enlarge_dataset_with_copula(initial_df, self.n_samples)
 

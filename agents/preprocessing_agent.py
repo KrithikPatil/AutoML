@@ -56,30 +56,49 @@ class PreprocessingAgent:
 
     def _coerce_types(self):
         """Attempt to coerce columns to numeric types where possible."""
-        initial_dtypes = self.dataset.dtypes.to_dict()
+        self.reason.append("--- Starting Aggressive Type Coercion ---")
         for col in self.dataset.columns:
-            # Skip the target column if it's already identified and not meant to be numeric
-            # (e.g., if it's a categorical target for classification)
+            # Skip the target column if it's a classification target
             if self.target_column and col == self.target_column and self.inferred_task == "classification":
-                continue 
-            
+                continue
+
+            # Only attempt to coerce non-numeric columns that are not the target
+            if pd.api.types.is_numeric_dtype(self.dataset[col]):
+                continue
+
             # Attempt to convert to numeric, coercing errors will turn invalid parsing into NaN
             converted_series = pd.to_numeric(self.dataset[col], errors='coerce')
-            
-            # Check if conversion actually changed the dtype to numeric and didn't introduce too many NaNs
-            # If the original was not numeric and the new is numeric, and it's mostly numeric
-            if pd.api.types.is_object_dtype(initial_dtypes.get(col)) and pd.api.types.is_numeric_dtype(converted_series.dtype) and converted_series.notna().sum() / len(converted_series) > 0.8: # Require >80% non-NaN after conversion
+
+            # Heuristic: If a significant portion of the non-null original values could be converted
+            # to numbers, then we perform the conversion.
+            original_non_nulls = self.dataset[col].notna().sum()
+            converted_non_nulls = converted_series.notna().sum()
+
+            # If the original column was empty or all null, or if the column is the target column, do nothing
+            if original_non_nulls == 0:
+                continue
+
+            # If over 50% of the original non-null values were successfully converted, we accept it.
+            # This threshold can be adjusted based on your data characteristics.
+            if (converted_non_nulls / original_non_nulls) > 0.5:
                 self.dataset[col] = converted_series
-                self.reason.append(f"Coerced column '{col}' to numeric type.")
-            # Special handling for boolean-like columns that might become objects if mixed with other types
-            elif self.dataset[col].nunique(dropna=False) <= 2 and not pd.api.types.is_numeric_dtype(self.dataset[col]):
+                self.reason.append(f"Coerced column '{col}' to numeric. {original_non_nulls - converted_non_nulls} values failed conversion and are now NaN.")
+            # Special handling for columns that might be numeric but represented as strings with units or ranges
+            elif self.dataset[col].astype(str).str.contains(r'\d').any():  # Check if column contains any digits
+                # Attempt to extract numeric parts from strings
+                self.dataset[col] = self.dataset[col].astype(str).apply(lambda x: pd.to_numeric(re.search(r'[-+]?\d*\.?\d+', x).group() if re.search(r'[-+]?\d*\.?\d+', x) else np.nan, errors='coerce'))
+                if self.dataset[col].notna().sum() > 0.5 * original_non_nulls:
+                    self.reason.append(f"Extracted numeric values from column '{col}' containing units or ranges.")
+            # Special handling for binary-like object columns (e.g., 'Yes'/'No', 'True'/'False')
+            elif self.dataset[col].nunique(dropna=True) <= 2:
                 try:
-                    # Attempt to convert to boolean, then to int if needed for numerical treatment
-                    self.dataset[col] = self.dataset[col].astype(bool).astype(int)
-                    self.reason.append(f"Coerced binary column '{col}' to numeric (int) type.")
-                except:
-                    pass # Keep as object if coercion fails or is not appropriate
-        self.reason.append("Completed type coercion for dataset columns.")
+                    # Use category codes for a robust conversion to 0/1
+                    self.dataset[col] = self.dataset[col].astype('category').cat.codes
+                    self.reason.append(f"Coerced binary-like object column '{col}' to numeric (0/1) codes.")
+                except Exception:
+                    pass # Keep as object if coercion fails
+
+        self.reason.append("--- Finished Type Coercion ---")
 
 
     def _infer_ml_task(self):
@@ -96,7 +115,7 @@ class PreprocessingAgent:
     def identify_columns(self):
         """Identify numerical and categorical columns in the dataset."""
         self.numerical_columns = self.dataset.select_dtypes(include=[np.number]).columns.tolist()
-        self.categorical_columns = self.dataset.select_dtypes(include=['object', 'category']).columns.tolist()
+        self.categorical_columns = self.dataset.select_dtypes(include=['object', 'category']).columns.tolist()  # Include 'category'
         
         # Remove target column if it exists and is not numerical/categorical (e.g., if it's mixed type or ID)
         if self.target_column:
@@ -107,7 +126,7 @@ class PreprocessingAgent:
             else:
                 # If target is not in identified numerical/categorical, check if it's in all columns
                 if self.target_column not in self.dataset.columns:
-                    self.reason.append(f"Warning: Target column '{self.target_column}' not found in dataset. Skipping target-specific analysis.")
+                    self.reason.append(f"Warning: Target column '{self.target_column}' not found in dataset columns: {self.dataset.columns.tolist()}. Skipping target-specific analysis.")
                     self.target_column = None # Clear target if not found
         
         self.reason.append(f"Identified {len(self.numerical_columns)} numerical and {len(self.categorical_columns)} categorical columns.")
@@ -437,15 +456,46 @@ class PreprocessingAgent:
         else:
             self.reason.append("No outliers detected or removed based on z-score > 3.")
 
+    def remove_id_columns(self):
+        """Removes columns that appear to be identifiers."""
+        cols_to_drop = []
+        for col in self.dataset.columns:
+            # Heuristic 1: Column has all unique values and is not the target
+            if col != self.target_column and self.dataset[col].nunique() == len(self.dataset):
+                cols_to_drop.append(col)
+                self.reason.append(f"Identified and marked column '{col}' for removal (all values are unique).")
+            # Heuristic 2: Column name suggests it's an ID and it has high cardinality
+            elif 'id' in col.lower() and col != self.target_column and self.dataset[col].nunique() / len(self.dataset) > 0.95:
+                cols_to_drop.append(col)
+                self.reason.append(f"Identified and marked column '{col}' for removal (name suggests ID and has high cardinality).")
+        
+        if cols_to_drop:
+            self.dataset.drop(columns=cols_to_drop, inplace=True)
+            self.reason.append(f"Removed ID-like columns: {cols_to_drop}")
+            # After dropping, re-identify columns to ensure subsequent steps have the correct lists
+            self.identify_columns()
+
+
+    def encode_target_column(self):
+        """
+        Encodes the target column if it's categorical and the task is classification.
+        This is typically done with LabelEncoder.
+        """
+        if self.target_column and self.target_column in self.dataset.columns and self.inferred_task == 'classification':
+            # Check if the target is not already numeric
+            if self.dataset[self.target_column].dtype == 'object' or pd.api.types.is_categorical_dtype(self.dataset[self.target_column]):
+                self.reason.append(f"Task is classification, label encoding the target column '{self.target_column}'.")
+                le = LabelEncoder()
+                self.dataset[self.target_column] = le.fit_transform(self.dataset[self.target_column])
+                self.label_encoders[self.target_column] = le # Store encoder for potential inverse transform later
 
     def run(self, ordinal_columns=None):
         """Execute EDA and preprocessing steps."""
         self.reason = [] # Reset reasons for each run
         self.eda_results = [] # Reset EDA results for each run
 
-        # identify_columns is now called in __init__ after _coerce_types
-        # self.identify_columns() 
-        self.perform_eda() # Perform EDA first
+        self.remove_id_columns() # NEW: Remove ID-like columns before EDA and processing
+        self.perform_eda() # Perform EDA on the cleaned data
 
         # Query LLM for preprocessing techniques with metadata
         techniques = self.query_llm_for_preprocessing()
@@ -463,6 +513,9 @@ class PreprocessingAgent:
             if "remove outliers" in technique.lower() or "z-score" in technique.lower():
                 self.remove_outliers()
         
+        # After feature processing, handle the target column specifically
+        self.encode_target_column()
+
         # Save preprocessed dataset
         os.makedirs("dataset", exist_ok=True)
         preprocessed_path = os.path.join("dataset", "preprocessed_dataset.csv")

@@ -3,22 +3,15 @@ import pandas as pd
 import sqlite3
 from agents.dataset_agent import DatasetAgent
 from agents.preprocessing_agent import PreprocessingAgent
+from agents.modeling_agent import ModelingAgent
 import os # Already imported
 import glob # For finding image files
-
-# Global variables (will now primarily use gr.State for passing between functions)
-# These global vars are mostly for initial default values or if you need persistent access outside Gradio's state
-# For Gradio's internal flow, gr.State is better
-global_dataset = None
-global_reason = None
-global_preprocessed_dataset = None
-global_preprocess_reason = None
-global_metadata = None
 
 # Define constants for EDA artifact paths
 EDA_BASE_DIR = "dataset"
 EDA_PLOTS_DIR = os.path.join(EDA_BASE_DIR, "eda")
 EDA_TEXT_REPORT_PATH = os.path.join(EDA_BASE_DIR, "eda_results.txt")
+
 
 def load_csv_file(file):
     try:
@@ -127,14 +120,37 @@ def process_preprocessing_and_eda(current_dataset_state, current_metadata_state,
     # Return preprocessed dataset, metadata, preprocessing log, EDA text, and EDA plot paths
     return preprocessed_df, current_metadata_state, preprocessing_log_text, eda_summary_text, eda_image_paths
 
+# --- New Function for Modeling Step ---
+def process_modeling(current_dataset_state, prompt, target_column, model_choice):
+    """
+    Trains a model on the preprocessed data and returns the evaluation report.
+    """
+    if current_dataset_state is None:
+        return "Error: No preprocessed dataset available. Please complete Step 2 first."
+
+    if not target_column or not target_column.strip():
+        return "Error: Target column must be specified for modeling."
+
+    try:
+        # The dataset in current_dataset_state is already preprocessed
+        modeling_agent = ModelingAgent(
+            dataset=current_dataset_state,
+            task_description=prompt,
+            target_column=target_column,
+            model_choice=model_choice # Pass the selected model choice
+        )
+        report = modeling_agent.run()
+        return report
+    except Exception as e:
+        return f"An unexpected error occurred during modeling: {str(e)}"
 
 with gr.Blocks() as demo:
     gr.Markdown("# AutoML Dataset Generator, EDA, and Preprocessor")
 
     # Gradio State variables to hold data between function calls
     # Using None as initial value, which means no dataset is loaded yet.
-    dataset_state = gr.State(value=global_dataset) 
-    metadata_state = gr.State(value=global_metadata)
+    dataset_state = gr.State(value=None) 
+    metadata_state = gr.State(value=None)
     
     with gr.Tabs() as tabs:
         with gr.TabItem("1. Data Acquisition", id=0):
@@ -252,6 +268,68 @@ with gr.Blocks() as demo:
                     eda_text_output, 
                     eda_plots_output
                 ] # Update state and all relevant outputs
+            )
+
+        with gr.TabItem("3. Modeling", id=2):
+            gr.Markdown("## Train a Model")
+            gr.Markdown("This step uses the preprocessed data from the previous tab to train a model (RandomForest) and evaluate its performance.")
+            
+            gr.Markdown("### Preprocessed Dataset Info:")
+            preprocessed_dataset_info = gr.Markdown("No preprocessed data available. Please complete Step 2.")
+
+            # This function will update the info when the tab is selected or data changes
+            # This function needs to be defined within the scope where dataset_state and target_column_input are available,
+            # or passed as arguments. It's currently fine as it is.
+            
+            # Add a dropdown for model selection
+            model_choice_input = gr.Dropdown(
+                choices=["Random Forest", "Logistic Regression", "Linear Regression", "Gradient Boosting"],
+                label="Select Model",
+                value="Random Forest", # Default selection
+                info="Choose a machine learning model for training."
+            )
+
+            def update_preprocessed_info(dataset_state, target_column): # This function is already defined above the tabs
+                if dataset_state is not None:
+                    target_col_info = "Target column not specified or found."
+                    if target_column and target_column in dataset_state.columns:
+                        target_col_info = f"Target column '{target_column}' found. Dtype: {dataset_state[target_column].dtype}, Unique values: {dataset_state[target_column].nunique()}"
+                    
+                    info_str = [
+                        f"**Preprocessed Dataset Loaded:** Yes",
+                        f"**Shape:** {dataset_state.shape}",
+                        f"**Columns:** {', '.join(dataset_state.columns)}",
+                        f"**Info:** {target_col_info}"
+                    ]
+                    return "\n".join(info_str)
+                return "No preprocessed data available. Please complete Step 2."
+
+            # Update the info display when dataset_state changes
+            dataset_state.change(
+                fn=update_preprocessed_info,
+                inputs=[dataset_state, target_column_input],
+                outputs=preprocessed_dataset_info
+            )
+
+            train_button = gr.Button("Train Model and Evaluate")
+            
+            modeling_results_output = gr.Textbox(
+                label="Modeling Results",
+                lines=20,
+                interactive=False,
+                show_copy_button=True
+            )
+
+            train_button.click(
+                fn=process_modeling,
+                # Inputs should come from the EDA tab, as they define the task
+                inputs=[
+                    dataset_state,
+                    prompt_input_eda,
+                    target_column_input,
+                    model_choice_input # Add model choice to inputs
+                ],
+                outputs=modeling_results_output
             )
 
     # Note: `demo.launch()` is already at the end of your original script.
