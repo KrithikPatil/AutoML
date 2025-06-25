@@ -113,8 +113,8 @@ def gaussian_copula_synthesize(data, n_samples, seed=42):
             probs = params[1]
             cats = sorted(probs.keys())
             cum_probs = np.cumsum([probs[cat] for cat in cats])
-            synthetic_data[col] = [
-                cats[np.searchsorted(cum_probs, norm.cdf(x))] for x in latent_samples[col]
+            synthetic_data[col] = [ # Apply clip to norm.cdf(x) to prevent index out of bounds
+                cats[np.searchsorted(cum_probs, np.clip(norm.cdf(x), 1e-6, 1 - 1e-6))] for x in latent_samples[col]
             ]
     return synthetic_data
 
@@ -136,12 +136,62 @@ class DatasetAgent:
                 prompt=prompt,
                 options={"num_predict": 800}
             )
-            raw_csv = response["response"].strip()
-            print("Raw CSV Response:\n", raw_csv)
+            raw_response = response["response"].strip()
+            print("Raw LLM Response:\n", raw_response)
 
-            cleaned_csv = clean_csv(raw_csv)
-            print("Processed CSV for parsing:\n", cleaned_csv)
+            # --- NEW: Logic to extract only the CSV block from the LLM response ---
+            csv_block = raw_response # Default to raw_response if no specific block found
 
+            # 1. Check for markdown code blocks first, as it's the most reliable signal.
+            match = re.search(r"```(?:csv)?\s*\n(.*?)\n```", raw_response, re.DOTALL | re.IGNORECASE)
+            if match:
+                csv_block = match.group(1).strip()
+            else:
+                # 2. If no markdown, attempt to extract a contiguous CSV block
+                lines = raw_response.strip().split('\n')
+                csv_lines = []
+                header_found = False
+                num_cols = -1
+
+                for line in lines:
+                    stripped_line = line.strip()
+                    if not stripped_line: # Skip empty lines
+                        continue
+
+                    # Heuristic: A line is likely part of the CSV if it contains commas
+                    # and, if a header is found, has the same number of fields.
+                    if ',' in stripped_line:
+                        try:
+                            # Use csv.reader to handle quoted fields correctly
+                            reader = csv.reader(StringIO(stripped_line))
+                            fields = next(reader)
+                            current_line_num_cols = len(fields)
+                        except csv.Error:
+                            # If it's not a valid CSV line, skip it
+                            continue
+
+                        if not header_found:
+                            csv_lines.append(stripped_line)
+                            num_cols = current_line_num_cols
+                            header_found = True
+                        elif header_found and current_line_num_cols == num_cols:
+                            csv_lines.append(stripped_line)
+                        else:
+                            # This line has commas but doesn't match the column count,
+                            # or it's after the CSV block (e.g., explanatory text).
+                            # Stop collecting CSV lines.
+                            break
+                    elif header_found:
+                        # If a header was found, but the current line has no commas,
+                        # it's likely the end of the CSV block.
+                        break
+
+                if csv_lines:
+                    csv_block = "\n".join(csv_lines)
+            # --- END of new extraction logic ---
+
+            cleaned_csv = clean_csv(csv_block)
+            print("Cleaned CSV for parsing:\n", cleaned_csv)
             df = safe_parse_csv(cleaned_csv)
             if df is None:
                 raise ValueError("CSV parsing returned empty or invalid DataFrame")

@@ -144,6 +144,42 @@ def process_modeling(current_dataset_state, prompt, target_column, model_choice)
     except Exception as e:
         return f"An unexpected error occurred during modeling: {str(e)}"
 
+# Define update_dataset_info as a top-level function
+def update_dataset_info(dataset_state, metadata_state):
+    """
+    Updates the Markdown display for dataset information in the Preprocessing tab.
+    """
+    if dataset_state is not None and metadata_state is not None:
+        info_str = [
+            f"**Current Dataset Loaded:** Yes",
+            f"**Shape:** {dataset_state.shape}",
+            f"**Metadata:**",
+            f"- Shape: {metadata_state['shape']}",
+            f"- Columns and Data Types:\n```\n{metadata_state['dtypes']}\n```", # Use code block for dtypes
+            f"- Summary Statistics:\n```\n{metadata_state['summary_stats']}\n```",
+            f"- Missing Values:\n```\n{metadata_state['missing_values']}\n```"
+        ]
+        return "\n".join(info_str)
+    return "No dataset loaded yet. Please go back to 'Data Acquisition' tab."
+
+# Define update_preprocessed_info as a top-level function
+def update_preprocessed_info(dataset_state, target_column):
+    """
+    Updates the Markdown display for preprocessed dataset information in the Modeling tab.
+    """
+    if dataset_state is not None:
+        target_col_info = "Target column not specified or found."
+        if target_column and target_column in dataset_state.columns:
+            target_col_info = f"Target column '{target_column}' found. Dtype: {dataset_state[target_column].dtype}, Unique values: {dataset_state[target_column].nunique()}"
+        info_str = [
+            f"**Preprocessed Dataset Loaded:** Yes",
+            f"**Shape:** {dataset_state.shape}",
+            f"**Columns:** {', '.join(dataset_state.columns)}",
+            f"**Info:** {target_col_info}"
+        ]
+        return "\n".join(info_str)
+    return "No preprocessed data available. Please complete Step 2."
+
 with gr.Blocks() as demo:
     gr.Markdown("# AutoML Dataset Generator, EDA, and Preprocessor")
 
@@ -210,21 +246,6 @@ with gr.Blocks() as demo:
             current_dataset_info = gr.Markdown("No dataset loaded yet. Please go back to 'Data Acquisition' tab.")
             
             # Display metadata from dataset_state after acquisition
-            # This will be updated by the process_dataset_acquisition function
-            def update_dataset_info(dataset_state, metadata_state):
-                if dataset_state is not None and metadata_state is not None:
-                    info_str = [
-                        f"**Current Dataset Loaded:** Yes",
-                        f"**Shape:** {dataset_state.shape}",
-                        f"**Metadata:**",
-                        f"- Shape: {metadata_state['shape']}",
-                        f"- Columns and Data Types:\n```\n{metadata_state['dtypes']}\n```", # Use code block for dtypes
-                        f"- Summary Statistics:\n```\n{metadata_state['summary_stats']}\n```",
-                        f"- Missing Values:\n```\n{metadata_state['missing_values']}\n```"
-                    ]
-                    return "\n".join(info_str)
-                return "No dataset loaded yet. Please go back to 'Data Acquisition' tab."
-
             # Define inputs for preprocessing
             prompt_input_eda = gr.Textbox(label="Task Description (for preprocessing/EDA recommendations)", placeholder="e.g., classification model for customer churn, aiming for high accuracy with SVM.")
             target_column_input = gr.Textbox(label="Target Column (optional, but recommended for supervised tasks)", placeholder="e.g., churn")
@@ -288,21 +309,6 @@ with gr.Blocks() as demo:
                 value="Random Forest", # Default selection
                 info="Choose a machine learning model for training."
             )
-
-            def update_preprocessed_info(dataset_state, target_column): # This function is already defined above the tabs
-                if dataset_state is not None:
-                    target_col_info = "Target column not specified or found."
-                    if target_column and target_column in dataset_state.columns:
-                        target_col_info = f"Target column '{target_column}' found. Dtype: {dataset_state[target_column].dtype}, Unique values: {dataset_state[target_column].nunique()}"
-                    
-                    info_str = [
-                        f"**Preprocessed Dataset Loaded:** Yes",
-                        f"**Shape:** {dataset_state.shape}",
-                        f"**Columns:** {', '.join(dataset_state.columns)}",
-                        f"**Info:** {target_col_info}"
-                    ]
-                    return "\n".join(info_str)
-                return "No preprocessed data available. Please complete Step 2."
 
             # Update the info display when dataset_state changes
             dataset_state.change(
